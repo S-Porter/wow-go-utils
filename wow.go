@@ -42,6 +42,7 @@ func init() {
 	*/
 }
 
+// Dispatch takes args from the url and sends them off to the proper fns.
 func Dispatch(args []string) []byte {
 	if len(args) > 0 {
 		switch args[0] {
@@ -49,36 +50,36 @@ func Dispatch(args []string) []byte {
 			return addCharacter(args[1:])
 		case "del":
 			return deleteCharacter(args[1:])
+		case "listchars":
+			return listCharacters()
 		default:
 			return errorJSON(errors.New("wowapi, requested api function not found"))
 		}
 	}
-	return errorJSON(errors.New("wow api args were blank"))
+	return errorJSON(errors.New("wowapi, args were blank"))
 }
 
-func getConfig() wowConfig {
-	raw, fileErr := ioutil.ReadFile("config/config.json")
-	if fileErr != nil {
-		fmt.Println("Error reading file. " + fileErr.Error())
+func listCharacters() []byte {
+	response, err := json.Marshal(struct {
+		Data []character `json:"data"`
+	}{config.Characters})
+	if err != nil {
+		return errorJSON(errors.New("error listing characters"))
 	}
-
-	var config wowConfig
-	json.Unmarshal(raw, &config)
-	return config
+	return response
 }
 
 func addCharacter(charData []string) []byte {
 	if len(charData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not added"))
 	}
-	charData[0] = strings.Title(charData[0])
-	charData[1] = strings.Title(charData[1])
-	for _, char := range config.Characters {
-		if charData[0] == char.Realm && charData[1] == char.Name {
+	newChar := character{strings.Title(charData[0]), strings.Title(charData[1])}
+	for _, configChar := range config.Characters {
+		if newChar.Realm == configChar.Realm && newChar.Name == configChar.Name {
 			return errorJSON(errors.New("character already exists"))
 		}
 	}
-	config.Characters = append(config.Characters, character{charData[0], charData[1]})
+	config.Characters = append(config.Characters, newChar)
 	if saveConfig() == "failure" {
 		return errorJSON(errors.New("error saving config to file"))
 	}
@@ -95,11 +96,9 @@ func deleteCharacter(charData []string) []byte {
 	if len(charData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not deleted"))
 	}
-	charData[0] = strings.Title(charData[0])
-	charData[1] = strings.Title(charData[1])
-
-	for i, char := range config.Characters {
-		if charData[0] == char.Realm && charData[1] == char.Name {
+	newChar := character{strings.Title(charData[0]), strings.Title(charData[1])}
+	for i, configChar := range config.Characters {
+		if newChar.Realm == configChar.Realm && newChar.Name == configChar.Name {
 			config.Characters = append(config.Characters[:i], config.Characters[i+1:]...)
 			if saveConfig() == "failure" {
 				return errorJSON(errors.New("error saving config to file"))
@@ -114,6 +113,17 @@ func deleteCharacter(charData []string) []byte {
 		}
 	}
 	return errorJSON(errors.New("character not found"))
+}
+
+func getConfig() wowConfig {
+	raw, fileErr := ioutil.ReadFile("config/config.json")
+	if fileErr != nil {
+		fmt.Println("Error reading file. " + fileErr.Error())
+	}
+
+	var config wowConfig
+	json.Unmarshal(raw, &config)
+	return config
 }
 
 func saveConfig() string {
