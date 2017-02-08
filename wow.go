@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -35,6 +37,16 @@ type item struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 	//could get an id and pull the item icon from the API/wow folder?
+}
+
+//checks if there is any stored data on the given character.
+func (data characterData) checkExists(realm, name string) bool {
+	for _, savedChar := range data.Characters {
+		if strings.Title(realm) == savedChar.Realm && strings.Title(name) == savedChar.Name {
+			return true
+		}
+	}
+	return false
 }
 
 var config = readConfig()
@@ -58,19 +70,43 @@ func init() {
 func Dispatch(args []string) []byte {
 	if len(args) > 0 {
 		switch args[0] {
-		case "add":
+		case "addchar":
 			return addCharacter(args[1:])
-		case "del":
+		case "delchar":
 			return deleteCharacter(args[1:])
 		case "listchars":
 			return listCharacters()
-		case "getDataStore":
+		case "getdatastore":
 			return []byte("hit data store endpoint...")
+		case "getrep":
+			return blizzGetRep(args[1:])
 		default:
 			return errorJSON(errors.New("wowapi, requested api function not found"))
 		}
 	}
 	return errorJSON(errors.New("wowapi, args were blank"))
+}
+
+//TODO: make this async
+func blizzGetRep(args []string) []byte {
+	if !charData.checkExists(args[0], args[1]) {
+		return errorJSON(errors.New("requested character not in config"))
+	}
+	queryString := url.Values{}
+	queryString.Set("fields", "reputation")
+	queryString.Set("locale", "en_US")
+	queryString.Set("apikey", config.BlizzAPIKey)
+	urlString := "https://us.api.battle.net/wow/character/" + args[0] + "/" + args[1] + "?"
+	resp, err := http.Get(urlString + queryString.Encode())
+	if err != nil {
+		return errorJSON(errors.New("error pulling from blizzard API. " + err.Error()))
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return errorJSON(errors.New("error reading blizz API body. " + err.Error()))
+	}
+	return body
 }
 
 func listCharacters() []byte {
@@ -88,14 +124,12 @@ func addCharacter(newData []string) []byte {
 		return errorJSON(errors.New("wrong number of args, character not added"))
 	}
 	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), []item{}}
-	for _, configChar := range charData.Characters {
-		if newChar.Realm == configChar.Realm && newChar.Name == configChar.Name {
-			return errorJSON(errors.New("character already exists"))
-		}
+	if charData.checkExists(newChar.Realm, newChar.Name) {
+		return errorJSON(errors.New("character already exists"))
 	}
 	charData.Characters = append(charData.Characters, newChar)
 	if writeCharData() == "failure" {
-		return errorJSON(errors.New("error saving config to file"))
+		return errorJSON(errors.New("error saving character changes to file"))
 	}
 	response, err := json.Marshal(struct {
 		Data string `json:"data"`
@@ -115,7 +149,7 @@ func deleteCharacter(delData []string) []byte {
 		if delChar.Realm == existingChar.Realm && delChar.Name == existingChar.Name {
 			charData.Characters = append(charData.Characters[:i], charData.Characters[i+1:]...)
 			if writeCharData() == "failure" {
-				return errorJSON(errors.New("error saving config to file"))
+				return errorJSON(errors.New("error saving character changes to file"))
 			}
 			response, err := json.Marshal(struct {
 				Data string `json:"data"`
