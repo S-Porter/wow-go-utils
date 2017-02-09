@@ -60,6 +60,7 @@ var client *wowlib.ApiClient
 func init() {
 	var clientError error
 	client, clientError = wowlib.NewApiClient("US", "")
+	client.Secret = config.BlizzAPIKey
 	if clientError != nil {
 		fmt.Println(clientError.Error())
 	}
