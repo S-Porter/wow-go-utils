@@ -16,22 +16,26 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/http"
-	"net/url"
 	"strings"
+	"time"
+
+	wowlib "github.com/capoferro/wow"
 )
 
 type wowConfig struct {
 	InstallLocation string `json:"wowInstall"`
 	BlizzAPIKey     string `json:"apiKey"`
+	UpdateTimeout   int    `json:"updateTimeout"`
 }
 type characterData struct {
 	Characters []character `json:"characters"`
 }
 type character struct {
-	Realm string `json:"realm"`
-	Name  string `json:"name"`
-	Items []item `json:"items"`
+	Realm        string               `json:"realm"`
+	Name         string               `json:"name"`
+	Items        []item               `json:"items"`
+	Reputation   []*wowlib.Reputation `json:"reputation"`
+	LastModified uint                 `json:"lastModified"`
 }
 type item struct {
 	Name  string `json:"name"`
@@ -51,19 +55,32 @@ func (data characterData) checkExists(realm, name string) bool {
 
 var config = readConfig()
 var charData = readCharData()
+var client *wowlib.ApiClient
 
 func init() {
-	/* I might not need an init at all, but in here we can:
-	   -set up periodic parsing for data store (or should it just happen when the user searches for something?)
-	*
-	temp, _ := json.Marshal(config)
-	fmt.Printf("config=%+v", string(temp))
-	fmt.Println()
-	*/
-	temp, _ := json.Marshal(charData)
-	fmt.Printf("charData=%+v", string(temp))
-	fmt.Println()
-
+	var clientError error
+	client, clientError = wowlib.NewApiClient("US", "")
+	if clientError != nil {
+		fmt.Println(clientError.Error())
+	}
+	for _, char := range charData.Characters {
+		summary, err := client.GetCharacter(char.Realm, char.Name)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+		//the blizzard API returns lastModified in ms since epoch, div/1000 for seconds.
+		if ((summary.LastModified - char.LastModified) / 1000) > 300 {
+			modified := time.Unix(int64(charData.Characters[0].LastModified)/1000, 0)
+			fmt.Println(char.Name + " last modified " + modified.Format("Mon Jan 2, 3:04 PM") + ", updating...")
+			err := blizzUpdateRep(char.Realm, char.Name)
+			if err == "failure" {
+				print(errorJSON(errors.New("error updating character information")))
+			}
+		}
+	}
+	/* Figure out the best way to keep data updated. I would like to avoid pulling data when the user clicks
+	something, since there would be a ~1-2 second delay (at best). I could set up polling to check LastModified
+	every few minutes, and then only pull the full dataset on modification. */
 }
 
 // Dispatch takes args from the url and sends them off to the proper fns.
@@ -79,7 +96,7 @@ func Dispatch(args []string) []byte {
 		case "getdatastore":
 			return []byte("hit data store endpoint...")
 		case "getrep":
-			return blizzGetRep(args[1:])
+			return getRep(args[1:])
 		default:
 			return errorJSON(errors.New("wowapi, requested api function not found"))
 		}
@@ -87,26 +104,40 @@ func Dispatch(args []string) []byte {
 	return errorJSON(errors.New("wowapi, args were blank"))
 }
 
-//TODO: make this async
-func blizzGetRep(args []string) []byte {
-	if !charData.checkExists(args[0], args[1]) {
-		return errorJSON(errors.New("requested character not in config"))
+func getRep(args []string) []byte {
+	for _, char := range charData.Characters {
+		if strings.Title(args[0]) == char.Realm && strings.Title(args[1]) == char.Name {
+			relevantReps := []*wowlib.Reputation{}
+			for _, rep := range char.Reputation {
+				//ignore reps at standing=3, value=0 (absolute neutral) to save space
+				if rep.Standing != 3 && rep.Value != 0 {
+					relevantReps = append(relevantReps, rep)
+				}
+			}
+			bytes, _ := json.Marshal(struct {
+				Data []*wowlib.Reputation `json:"data"`
+			}{relevantReps})
+			return bytes
+		}
 	}
-	queryString := url.Values{}
-	queryString.Set("fields", "reputation")
-	queryString.Set("locale", "en_US")
-	queryString.Set("apikey", config.BlizzAPIKey)
-	urlString := "https://us.api.battle.net/wow/character/" + args[0] + "/" + args[1] + "?"
-	resp, err := http.Get(urlString + queryString.Encode())
-	if err != nil {
-		return errorJSON(errors.New("error pulling from blizzard API. " + err.Error()))
+	return errorJSON(errors.New("requested character not in config"))
+}
+
+/* Update the given character reputations using the blizzard API */
+func blizzUpdateRep(realm, name string) string {
+	for i, char := range charData.Characters {
+		if realm == char.Realm && name == char.Name {
+			response, err := client.GetCharacterWithFields(realm, name, []string{"reputation"})
+			if err != nil {
+				return "failure"
+			}
+			charData.Characters[i].Reputation = response.Reputation
+			charData.Characters[i].LastModified = response.LastModified
+			writeCharData()
+			return "success"
+		}
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return errorJSON(errors.New("error reading blizz API body. " + err.Error()))
-	}
-	return body
+	return "failure"
 }
 
 func listCharacters() []byte {
@@ -123,7 +154,7 @@ func addCharacter(newData []string) []byte {
 	if len(newData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not added"))
 	}
-	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), []item{}}
+	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), []item{}, []*wowlib.Reputation{}, 0}
 	if charData.checkExists(newChar.Realm, newChar.Name) {
 		return errorJSON(errors.New("character already exists"))
 	}
@@ -144,7 +175,7 @@ func deleteCharacter(delData []string) []byte {
 	if len(delData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not deleted"))
 	}
-	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), []item{}}
+	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), []item{}, []*wowlib.Reputation{}, 0}
 	for i, existingChar := range charData.Characters {
 		if delChar.Realm == existingChar.Realm && delChar.Name == existingChar.Name {
 			charData.Characters = append(charData.Characters[:i], charData.Characters[i+1:]...)
