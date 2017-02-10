@@ -33,24 +33,14 @@ type characterData struct {
 type character struct {
 	Realm        string               `json:"realm"`
 	Name         string               `json:"name"`
+	LastModified uint                 `json:"lastModified"`
 	Items        []item               `json:"items"`
 	Reputation   []*wowlib.Reputation `json:"reputation"`
-	LastModified uint                 `json:"lastModified"`
 }
 type item struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 	//could get an id and pull the item icon from the API/wow folder?
-}
-
-//checks if there is any stored data on the given character.
-func (data characterData) checkExists(realm, name string) bool {
-	for _, savedChar := range data.Characters {
-		if strings.Title(realm) == savedChar.Realm && strings.Title(name) == savedChar.Name {
-			return true
-		}
-	}
-	return false
 }
 
 var config = readConfig()
@@ -106,12 +96,15 @@ func Dispatch(args []string) []byte {
 }
 
 func getRep(args []string) []byte {
+	//for testing purposes I want to limit the results to Legion rep only.
+	legionReps := []int{1828, 1948, 1883, 1900, 1090, 1859, 1894}
+
 	for _, char := range charData.Characters {
 		if strings.Title(args[0]) == char.Realm && strings.Title(args[1]) == char.Name {
 			relevantReps := []*wowlib.Reputation{}
 			for _, rep := range char.Reputation {
 				//ignore reps at standing=3, value=0 (absolute neutral) to save space
-				if rep.Standing != 3 && rep.Value != 0 {
+				if rep.Standing != 3 && rep.Value != 0 && intInSlice(rep.Id, legionReps) {
 					relevantReps = append(relevantReps, rep)
 				}
 			}
@@ -141,6 +134,16 @@ func blizzUpdateRep(realm, name string) string {
 	return "failure"
 }
 
+//checks if there is any stored data on the given character.
+func (data characterData) checkExists(realm, name string) bool {
+	for _, savedChar := range data.Characters {
+		if strings.Title(realm) == savedChar.Realm && strings.Title(name) == savedChar.Name {
+			return true
+		}
+	}
+	return false
+}
+
 func listCharacters() []byte {
 	response, err := json.Marshal(struct {
 		Data []character `json:"data"` //TODO: change this to only marshal name/realm
@@ -155,7 +158,7 @@ func addCharacter(newData []string) []byte {
 	if len(newData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not added"))
 	}
-	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), []item{}, []*wowlib.Reputation{}, 0}
+	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), 0, []item{}, []*wowlib.Reputation{}}
 	if charData.checkExists(newChar.Realm, newChar.Name) {
 		return errorJSON(errors.New("character already exists"))
 	}
@@ -176,7 +179,7 @@ func deleteCharacter(delData []string) []byte {
 	if len(delData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not deleted"))
 	}
-	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), []item{}, []*wowlib.Reputation{}, 0}
+	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), 0, []item{}, []*wowlib.Reputation{}}
 	for i, existingChar := range charData.Characters {
 		if delChar.Realm == existingChar.Realm && delChar.Name == existingChar.Name {
 			charData.Characters = append(charData.Characters[:i], charData.Characters[i+1:]...)
@@ -247,4 +250,13 @@ func errorJSON(e error) []byte {
 		panic("Error encoding the JSON error. Something went horribly wrong.")
 	}
 	return response
+}
+
+func intInSlice(a int, list []int) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
 }
