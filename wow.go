@@ -96,6 +96,9 @@ func Dispatch(args []string) []byte {
 }
 
 func getRep(args []string) []byte {
+	if len(args) != 2 {
+		return errorJSON(errors.New("wrong number of args, couldn't pull rep"))
+	}
 	//for testing purposes I want to limit the results to Legion rep only.
 	legionReps := []int{1828, 1948, 1883, 1900, 1090, 1859, 1894}
 
