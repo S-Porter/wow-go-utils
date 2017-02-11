@@ -17,9 +17,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"sync"
 	"time"
 
-	wowlib "github.com/capoferro/wow"
+	wowlib "github.com/S-Porter/blizzard-api-client"
 )
 
 type wowConfig struct {
@@ -46,27 +47,30 @@ type item struct {
 var config = readConfig()
 var charData = readCharData()
 var client *wowlib.ApiClient
+var mutex = &sync.Mutex{}
 
 func init() {
+	if config.BlizzAPIKey == "super-secret-api-key" {
+		fmt.Println("you forgot to add a real API key to config.json")
+	}
 	var clientError error
 	client, clientError = wowlib.NewApiClient("US", "")
 	client.Secret = config.BlizzAPIKey
 	if clientError != nil {
 		fmt.Println(clientError.Error())
 	}
-	for _, char := range charData.Characters {
+
+	characters := charData.Characters
+	for _, char := range characters {
 		summary, err := client.GetCharacter(char.Realm, char.Name)
 		if err != nil {
 			fmt.Println(err.Error())
 		}
 		//the blizzard API returns lastModified in ms since epoch, div/1000 for seconds.
 		if ((summary.LastModified - char.LastModified) / 1000) > 300 {
-			modified := time.Unix(int64(charData.Characters[0].LastModified)/1000, 0)
+			modified := time.Unix(int64(char.LastModified)/1000, 0)
 			fmt.Println(char.Name + " last modified " + modified.Format("Mon Jan 2, 3:04 PM") + ", updating...")
-			err := blizzUpdateRep(char.Realm, char.Name)
-			if err == "failure" {
-				print(errorJSON(errors.New("error updating character information")))
-			}
+			go blizzUpdateRep(char.Realm, char.Name)
 		}
 	}
 	/* Figure out the best way to keep data updated. I would like to avoid pulling data when the user clicks
@@ -121,20 +125,23 @@ func getRep(args []string) []byte {
 }
 
 /* Update the given character reputations using the blizzard API */
-func blizzUpdateRep(realm, name string) string {
+func blizzUpdateRep(realm, name string) {
 	for i, char := range charData.Characters {
 		if realm == char.Realm && name == char.Name {
 			response, err := client.GetCharacterWithFields(realm, name, []string{"reputation"})
 			if err != nil {
-				return "failure"
+				print(errorJSON(errors.New("error updating character information")))
+				return
 			}
+
+			mutex.Lock()
 			charData.Characters[i].Reputation = response.Reputation
 			charData.Characters[i].LastModified = response.LastModified
 			writeCharData()
-			return "success"
+			mutex.Unlock()
+			fmt.Println("finished updating " + name)
 		}
 	}
-	return "failure"
 }
 
 //checks if there is any stored data on the given character.
