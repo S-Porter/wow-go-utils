@@ -89,7 +89,7 @@ func Dispatch(args []string) []byte {
 		case "listchars":
 			return listCharacters()
 		case "getdatastore":
-			return []byte("hit data store endpoint...")
+			return allCharData()
 		case "getrep":
 			return getRep(args[1:])
 		default:
@@ -97,6 +97,14 @@ func Dispatch(args []string) []byte {
 		}
 	}
 	return errorJSON(errors.New("wowapi, args were blank"))
+}
+
+func allCharData() []byte {
+	data, err := json.Marshal(charData)
+	if err != nil {
+		return errorJSON(errors.New("error getting character data"))
+	}
+	return data
 }
 
 func getRep(args []string) []byte {
