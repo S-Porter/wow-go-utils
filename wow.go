@@ -37,6 +37,7 @@ type character struct {
 	LastModified uint                 `json:"lastModified"`
 	Items        []item               `json:"items"`
 	Reputation   []*wowlib.Reputation `json:"reputation"`
+	Notes        []string
 }
 type item struct {
 	Name  string `json:"name"`
@@ -92,6 +93,8 @@ func Dispatch(args []string) []byte {
 			return allCharData()
 		case "getrep":
 			return getRep(args[1:])
+		case "addnote":
+			return addNote(args[1:])
 		default:
 			return errorJSON(errors.New("wowapi, requested api function not found"))
 		}
@@ -105,6 +108,22 @@ func allCharData() []byte {
 		return errorJSON(errors.New("error getting character data"))
 	}
 	return data
+}
+
+func addNote(args []string) []byte {
+	if len(args) != 3 {
+		return errorJSON(errors.New("wrong number of args, couldn't add note"))
+	}
+	for _, char := range charData.Characters {
+		if strings.Title(args[0]) == char.Realm && strings.Title(args[1]) == char.Name {
+			char.Notes = append(char.Notes, args[2])
+			bytes, _ := json.Marshal(struct {
+				Data string `json:"data"`
+			}{"success"})
+			return bytes
+		}
+	}
+	return errorJSON(errors.New("requested character not in config"))
 }
 
 func getRep(args []string) []byte {
@@ -176,7 +195,7 @@ func addCharacter(newData []string) []byte {
 	if len(newData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not added"))
 	}
-	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), 0, []item{}, []*wowlib.Reputation{}}
+	newChar := character{strings.Title(newData[0]), strings.Title(newData[1]), 0, []item{}, []*wowlib.Reputation{}, []string{}}
 	if charData.checkExists(newChar.Realm, newChar.Name) {
 		return errorJSON(errors.New("character already exists"))
 	}
@@ -197,7 +216,7 @@ func deleteCharacter(delData []string) []byte {
 	if len(delData) != 2 {
 		return errorJSON(errors.New("wrong number of args, character not deleted"))
 	}
-	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), 0, []item{}, []*wowlib.Reputation{}}
+	delChar := character{strings.Title(delData[0]), strings.Title(delData[1]), 0, []item{}, []*wowlib.Reputation{}, []string{}}
 	for i, existingChar := range charData.Characters {
 		if delChar.Realm == existingChar.Realm && delChar.Name == existingChar.Name {
 			charData.Characters = append(charData.Characters[:i], charData.Characters[i+1:]...)
