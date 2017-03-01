@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -242,6 +243,12 @@ func readConfig() wowConfig {
 	}
 	var config wowConfig
 	json.Unmarshal(raw, &config)
+
+	// override the config file API key with the env variable if present
+	envAPIKey, ok := os.LookupEnv("BLIZZ_API_KEY")
+	if ok {
+		config.BlizzAPIKey = envAPIKey
+	}
 	return config
 }
 
