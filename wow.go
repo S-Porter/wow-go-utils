@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	wowlib "github.com/S-Porter/blizzard-api-client"
+	wowlib "github.com/glaaki/blizzard-api-client"
 )
 
 type wowConfig struct {
